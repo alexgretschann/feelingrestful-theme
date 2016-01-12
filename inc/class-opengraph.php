@@ -8,9 +8,7 @@ class OpenGraph {
 
 		add_action( 'opengraph', array( $this, 'opengraph' ) );
 
-		add_filter( 'opengraph_tags', array( $this, 'pagebuilder_tags' ) );
-
-		add_filter( 'opengraph_tags', array( $this, 'js_page_tags' ) );
+		add_filter( 'opengraph_tags', array( $this, 'pagebuilder_tags' ), 10, 2 );
 
 	}
 
@@ -18,25 +16,53 @@ class OpenGraph {
 
 		$tags = [ ];
 
-		if ( is_singular() ) {
-			$tags['og:title'] = get_the_title();
-		} elseif ( is_archive() ) {
-			$tags['og:title'] = get_the_archive_title();
+		// Get page ID for page currently being displayed
+		global $wpdb;
+		$postid = '';
+		$posttype = '';
+		$path = explode('/', $_SERVER['REQUEST_URI'] );
+		if( count($path) >= 3 ) {
+			$postname = $path[2];
+			$posttype = $path[1];
+			if ( is_numeric( $postname ) ) { // Speaker slugs are the post ID
+				$postid = $postname;
+			} else {
+				$post   = $wpdb->get_col( $wpdb->prepare( "SELECT ID FROM $wpdb->posts WHERE post_name='%s' AND post_status='publish';", $postname ) );
+				if ($post) {
+		        	$postid = $post[0];
+		    	}
+			}
+	    }
+
+		if ( $postid ) {
+
+		 	if ( get_the_title( $postid ) ) {
+		 		$tags['og:title'] = get_the_title( $postid );
+		 	}
+
+		 	if ( 'speakers' === $posttype ) { // No excerpt for speakers
+			 	$content = get_post_field( 'post_content', $postid );
+				if ( $content ) {
+					$tags['og:description'] = strip_tags( $content );
+				}
+		 	} else {
+			 	$excerpt = get_post_field( 'post_excerpt', $postid );
+				if ( $excerpt ) {
+					$tags['og:description'] = apply_filters( 'get_the_excerpt', $excerpt );
+				}
+			}
+
+			if ( get_the_permalink( $postid ) ) {
+				$tags['og:url'] = get_the_permalink( $postid );
+			}
+
+			if ( get_the_post_thumbnail_url( $postid, 'full' ) ) {
+				$tags['og:image'] = get_the_post_thumbnail_url( $postid, 'full' );
+			}
+
 		}
 
-		if ( is_singular() ) {
-			$tags['og:description'] = get_the_excerpt();
-		}
-
-		if ( is_singular() ) {
-			$tags['og:url'] = get_permalink();
-		} elseif ( is_tax() ) {
-			$tags['og:url'] = get_term_link( get_queried_object(), get_queried_object()->taxonomy );
-		}
-
-		if ( is_singular() && has_post_thumbnail() ) {
-			$tags['og:image'] = get_the_post_thumbnail_url( 'full' );
-		}
+		$tags = apply_filters( 'opengraph_tags', $tags, $postid );
 
 		$tags = wp_parse_args( $tags, [
 			'og:type'        => 'website',
@@ -48,8 +74,6 @@ class OpenGraph {
 
 		$tags = array_filter( $tags );
 
-		$tags = apply_filters( 'opengraph_tags', $tags );
-
 		foreach ( $tags as $property => $content ) {
 			printf( '
 			<meta property="%s" content="%s">',
@@ -60,20 +84,20 @@ class OpenGraph {
 
 	}
 
-	public function pagebuilder_tags( $tags ) {
+	public function pagebuilder_tags( $tags, $postid ) {
 
 		// Page Builder stuff
-		if ( class_exists( 'ModularPageBuilder\\Plugin' ) && is_singular() ) {
+		if ( class_exists( 'ModularPageBuilder\\Plugin' ) && $postid ) {
 
 			$mpb     = \ModularPageBuilder\Plugin::get_instance();
 			$builder = $mpb->get_builder( 'modular-page-builder' );
-			$html    = $builder->get_rendered_data( get_the_ID(), $builder->id . '-data' );
+			$html    = $builder->get_rendered_data( $postid, $builder->id . '-data' );
 
-			if ( empty( $tags['og:description'] ) ) {
-				$tags['og:description'] = wp_trim_excerpt( strip_tags( $html ) );
+			if ( empty( $tags['og:description'] ) && $html ) {
+				$tags['og:description'] = trim( strip_tags( $html ) );
 			}
 
-			foreach ( $builder->get_raw_data( get_the_ID() ) as $module_args ) {
+			foreach ( $builder->get_raw_data( $postid ) as $module_args ) {
 				if ( $module = $mpb->init_module( $module_args['name'], $module_args ) ) {
 					if ( 'image' === $module_args['name'] && ! has_post_thumbnail() ) {
 						$tags['og:image'] = $module->get_json()['image'][0][0];
@@ -87,15 +111,4 @@ class OpenGraph {
 		return $tags;
 	}
 
-	public function js_page_tags( $tags ) {
-
-		if ( is_404() ) {
-
-			$tags['og:title'] = trim( wp_title( '', false, 'right' ) );
-			$tags['og:url']   = home_url( $_SERVER['REQUEST_URI'] );
-
-		}
-
-		return $tags;
-	}
 }
