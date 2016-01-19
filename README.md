@@ -1,4 +1,4 @@
-### Feelingrestful WordPress React JS theme
+### WordPress React JS theme
 
 #### Building
 
